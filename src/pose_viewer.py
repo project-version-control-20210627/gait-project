@@ -98,6 +98,7 @@ class VideoProcessor:
 class PoseViewerApp:
     """M
 
+
     ain Tkinter application for pose viewing."""
 
     def __init__(self, root: tk.Tk, video_path: str = None):
@@ -170,7 +171,7 @@ class PoseViewerApp:
         style.configure('TLabelframe.Label', background='#2b2b2b', foreground='white')
 
         # High-contrast styles for angle panel (black/dark on light gray)
-        light_gray_bg = '#d9d9d9'
+        light_gray_bg = '#ececec'
         style.configure('AnglePanel.TLabelframe', background=light_gray_bg)
         style.configure('AnglePanel.TLabelframe.Label', background=light_gray_bg, foreground='#000000')
         style.configure('AnglePanel.TFrame', background=light_gray_bg)
