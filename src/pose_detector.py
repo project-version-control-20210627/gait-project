@@ -679,23 +679,102 @@ class PoseDetector:
 
         return angle
 
+    def get_arm_swing_angle(
+        self,
+        landmarks: Dict[str, Tuple[float, float, float]],
+        side: str,
+        trunk_inclination: Optional[float] = None
+    ) -> Optional[float]:
+        """
+        Calculate arm swing angle for the specified side.
+
+        The arm swing angle is the angle of the shoulder-to-wrist line
+        relative to the trunk inclination. This captures the net arm position
+        regardless of elbow flexion.
+
+        Args:
+            landmarks: Dictionary of normalized landmarks
+            side: 'left' or 'right' - which arm to measure
+            trunk_inclination: Pre-calculated trunk inclination angle (optional)
+                             If None, will be calculated from landmarks
+
+        Returns:
+            Arm swing angle in degrees:
+            - Positive = arm forward of trunk
+            - Negative = arm behind trunk
+            Returns None if required landmarks not visible
+        """
+        shoulder = landmarks.get(f'{side}_shoulder')
+        wrist = landmarks.get(f'{side}_wrist')
+
+        if shoulder is None or wrist is None:
+            return None
+
+        # Check visibility
+        if shoulder[2] < 0.5 or wrist[2] < 0.3:
+            return None
+
+        # Calculate trunk inclination if not provided
+        if trunk_inclination is None:
+            postural = self._calculate_sagittal_postural_angles(landmarks)
+            trunk_inclination = postural.get('trunk_inclination')
+            if trunk_inclination is None:
+                trunk_inclination = 0.0  # Assume vertical if can't calculate
+
+        # Calculate angle of shoulder-to-wrist line from vertical
+        # Using same convention as trunk_inclination:
+        # - 0 = vertical
+        # - positive = forward (wrist ahead of shoulder in x)
+        arm_angle_from_vertical = self._angle_from_vertical(
+            (shoulder[0], shoulder[1]),  # base point (shoulder)
+            (wrist[0], wrist[1])          # top point (wrist - even though it's lower)
+        )
+
+        # Note: _angle_from_vertical expects base->top direction pointing up
+        # But wrist is below shoulder, so we need to negate the result
+        # and measure shoulder->wrist direction instead
+        dx = wrist[0] - shoulder[0]
+        dy = wrist[1] - shoulder[1]
+        # Angle from vertical pointing downward
+        arm_angle_from_vertical = np.degrees(np.arctan2(dx, dy))
+
+        # Arm swing angle relative to trunk
+        arm_swing_angle = arm_angle_from_vertical - trunk_inclination
+
+        return arm_swing_angle
+
     def get_all_angles(
         self,
         landmarks: Dict[str, Tuple[float, float, float]],
-        view_type: str = 'side'
+        view_type: str = 'side_right'
     ) -> Dict[str, Optional[float]]:
         """
         Get both joint angles and postural angles combined.
 
         Args:
             landmarks: Dictionary of normalized landmarks
-            view_type: 'side' or 'front'
+            view_type: 'side_left', 'side_right', or 'front'
 
         Returns:
             Combined dictionary of all angle measurements
         """
         angles = self.get_joint_angles(landmarks)
         angles.update(self.get_postural_angles(landmarks, view_type))
+
+        # Add arm swing angle for lateral views
+        if view_type in ('side_left', 'side_right'):
+            # Get trunk inclination for arm swing calculation
+            trunk_inclination = angles.get('trunk_inclination')
+
+            # Determine which arm is the near-side arm
+            if view_type == 'side_left':
+                near_side = 'left'
+            else:
+                near_side = 'right'
+
+            arm_swing = self.get_arm_swing_angle(landmarks, near_side, trunk_inclination)
+            angles['arm_swing_angle'] = arm_swing
+
         return angles
 
     def close(self):

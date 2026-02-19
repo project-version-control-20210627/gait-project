@@ -20,6 +20,8 @@ from PIL import Image, ImageTk
 import cv2
 import numpy as np
 import threading
+from enum import Enum
+from datetime import date
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -27,14 +29,25 @@ from pose_detector import PoseDetector
 from center_of_mass import CenterOfMassCalculator
 from gait_cycle import (
     GaitCycleDetector, ViewTypeAnalyzer, HeelStrikeEvent, GaitCycle,
-    FramePoseData, BatchProcessingResults, batch_process_video
+    FramePoseData, BatchProcessingResults, batch_process_video,
+    SubjectMetadata, DualViewSession
 )
 from gait_normalizer import GaitNormalizer, NormalizedGaitData
 from gait_exporter import GaitDataExporter
 from gait_viewer_panels import (
-    GaitControlPanel, HeelStrikeTimelinePanel, GaitCycleListPanel,
-    CycleComparisonPanel, CenterOfMassPanel, PosturalAnglesPanel, ExportPanel
+    GaitControlPanel, HeelStrikeTimelinePanel, ExportPanel,
+    DualViewCycleListPanel, DualViewComparisonPanel, DualViewPosturePanel,
+    DualViewCenterOfMassPanel
 )
+
+
+class WorkflowState(Enum):
+    """Workflow states for the dual-view gait analysis session."""
+    SETUP = "setup"                        # Initial setup - selecting videos and metadata
+    PROCESSING = "processing"              # Processing videos for pose extraction
+    MARKING_SAGITTAL = "marking_sagittal"  # Marking heel strikes on sagittal view
+    MARKING_FRONTAL = "marking_frontal"    # Marking heel strikes on frontal view
+    ANALYSIS_READY = "analysis_ready"      # Analysis complete, viewing results
 
 
 class VideoProcessor:
@@ -96,25 +109,37 @@ class VideoProcessor:
 
 
 class PoseViewerApp:
-    """M
+    """Main Tkinter application for dual-view gait analysis."""
+
+    def __init__(self, root: tk.Tk):
 
 
-    ain Tkinter application for pose viewing."""
 
-    def __init__(self, root: tk.Tk, video_path: str = None):
         """
         Initialize the application.
 
         Args:
             root: Tkinter root window
-            video_path: Optional path to video file
         """
         self.root = root
-        self.root.title("Gait Analysis - Pose Viewer")
+        self.root.title("Gait Analysis - Dual View")
         self.root.configure(bg='#2b2b2b')
 
-        # Initialize components
-        self.video_processor = None
+        # Workflow state
+        self.workflow_state = WorkflowState.SETUP
+
+        # Dual video support
+        self.sagittal_video_processor = None
+        self.frontal_video_processor = None
+        self.sagittal_video_path = None
+        self.frontal_video_path = None
+        self.sagittal_camera_side = tk.StringVar(value='right')  # Which side camera is on
+
+        # Current video being viewed (switches based on workflow state)
+        self.current_video_processor = None
+        self.current_batch_results = None
+
+        # Pose detection
         self.pose_detector = None
         self.current_frame = None
         self.current_landmarks = None
@@ -127,17 +152,23 @@ class PoseViewerApp:
         self.com_calculator = CenterOfMassCalculator()
         self.gait_normalizer = GaitNormalizer()
         self.gait_exporter = GaitDataExporter()
-        self.view_type = tk.StringVar(value='side')
-        self.batch_results: BatchProcessingResults = None
-        self.normalized_cycles: list[NormalizedGaitData] = []
+        self.view_type = tk.StringVar(value='side_right')
         self.is_processing = False
+
+        # Dual view session data
+        self.session: DualViewSession = None
+        self.sagittal_results: BatchProcessingResults = None
+        self.frontal_results: BatchProcessingResults = None
+        self.sagittal_normalized_cycles: list[NormalizedGaitData] = []
+        self.frontal_normalized_cycles: list[NormalizedGaitData] = []
+
+        # Subject metadata
+        self.subject_id = tk.StringVar(value='')
+        self.recording_date = tk.StringVar(value=date.today().isoformat())
+        self.walking_condition = tk.StringVar(value='')
 
         # Setup UI
         self._setup_ui()
-
-        # Load video if provided
-        if video_path:
-            self._load_video(video_path)
 
         # Bind keyboard shortcuts
         self.root.bind('<Left>', lambda e: self._prev_frame())
@@ -145,6 +176,44 @@ class PoseViewerApp:
         self.root.bind('<Home>', lambda e: self._goto_first_frame())
         self.root.bind('<End>', lambda e: self._goto_last_frame())
         self.root.bind('<space>', lambda e: self._toggle_overlay())
+
+    # Properties for backward compatibility with single-video code
+    @property
+    def video_processor(self):
+        """Get current video processor based on workflow state."""
+        return self.current_video_processor
+
+    @video_processor.setter
+    def video_processor(self, value):
+        self.current_video_processor = value
+
+    @property
+    def batch_results(self):
+        """Get current batch results based on workflow state."""
+        return self.current_batch_results
+
+    @batch_results.setter
+    def batch_results(self, value):
+        self.current_batch_results = value
+
+    @property
+    def normalized_cycles(self):
+        """Get normalized cycles for current view."""
+        if self.workflow_state in (WorkflowState.MARKING_SAGITTAL, WorkflowState.SETUP):
+            return self.sagittal_normalized_cycles
+        elif self.workflow_state == WorkflowState.MARKING_FRONTAL:
+            return self.frontal_normalized_cycles
+        # In analysis mode, default to sagittal
+        return self.sagittal_normalized_cycles
+
+    @normalized_cycles.setter
+    def normalized_cycles(self, value):
+        if self.workflow_state in (WorkflowState.MARKING_SAGITTAL, WorkflowState.SETUP):
+            self.sagittal_normalized_cycles = value
+        elif self.workflow_state == WorkflowState.MARKING_FRONTAL:
+            self.frontal_normalized_cycles = value
+        else:
+            self.sagittal_normalized_cycles = value
 
     def _setup_ui(self):
         """Create the user interface."""
@@ -158,7 +227,7 @@ class PoseViewerApp:
         self.main_frame.columnconfigure(0, weight=1)
         self.main_frame.columnconfigure(1, weight=1)
         self.main_frame.rowconfigure(1, weight=0)  # Display panels - fixed size, no expansion
-        self.main_frame.rowconfigure(4, weight=1)  # Gait notebook gets remaining space
+        self.main_frame.rowconfigure(5, weight=1)  # Gait notebook gets remaining space
 
         # Style - use explicit named styles for reliable dark theme
         style = ttk.Style()
@@ -203,14 +272,562 @@ class PoseViewerApp:
         # Gait analysis panels (tabbed interface)
         self._create_gait_panels()
 
+        # Setup panel (initially hidden, shown at startup)
+        self._create_setup_panel()
+
+    def _create_setup_panel(self):
+        """Create the initial setup panel for video selection and metadata."""
+        self.setup_frame = ttk.LabelFrame(
+            self.main_frame,
+            text="Session Setup",
+            padding="20"
+        )
+        # Will be shown/hidden via grid
+
+        # Title
+        ttk.Label(
+            self.setup_frame,
+            text="Dual-View Gait Analysis Setup",
+            font=('TkDefaultFont', 14, 'bold')
+        ).grid(row=0, column=0, columnspan=3, pady=(0, 20))
+
+        # Sagittal video selection
+        ttk.Label(
+            self.setup_frame,
+            text="Sagittal (Side) View Video:"
+        ).grid(row=1, column=0, sticky='e', padx=5, pady=5)
+
+        self.sagittal_path_var = tk.StringVar(value="No file selected")
+        ttk.Label(
+            self.setup_frame,
+            textvariable=self.sagittal_path_var,
+            width=50
+        ).grid(row=1, column=1, sticky='w', padx=5, pady=5)
+
+        ttk.Button(
+            self.setup_frame,
+            text="Browse...",
+            command=self._select_sagittal_video
+        ).grid(row=1, column=2, padx=5, pady=5)
+
+        # Camera side selection
+        ttk.Label(
+            self.setup_frame,
+            text="Camera Position:"
+        ).grid(row=2, column=0, sticky='e', padx=5, pady=5)
+
+        camera_frame = ttk.Frame(self.setup_frame)
+        camera_frame.grid(row=2, column=1, sticky='w', padx=5, pady=5)
+
+        ttk.Radiobutton(
+            camera_frame,
+            text="Left Side of Subject",
+            variable=self.sagittal_camera_side,
+            value='left'
+        ).pack(side=tk.LEFT, padx=10)
+
+        ttk.Radiobutton(
+            camera_frame,
+            text="Right Side of Subject",
+            variable=self.sagittal_camera_side,
+            value='right'
+        ).pack(side=tk.LEFT, padx=10)
+
+        # Frontal video selection
+        ttk.Label(
+            self.setup_frame,
+            text="Frontal (Front) View Video:"
+        ).grid(row=3, column=0, sticky='e', padx=5, pady=5)
+
+        self.frontal_path_var = tk.StringVar(value="No file selected")
+        ttk.Label(
+            self.setup_frame,
+            textvariable=self.frontal_path_var,
+            width=50
+        ).grid(row=3, column=1, sticky='w', padx=5, pady=5)
+
+        ttk.Button(
+            self.setup_frame,
+            text="Browse...",
+            command=self._select_frontal_video
+        ).grid(row=3, column=2, padx=5, pady=5)
+
+        # Separator
+        ttk.Separator(self.setup_frame, orient='horizontal').grid(
+            row=4, column=0, columnspan=3, sticky='ew', pady=15
+        )
+
+        # Subject metadata
+        ttk.Label(
+            self.setup_frame,
+            text="Subject Metadata",
+            font=('TkDefaultFont', 11, 'bold')
+        ).grid(row=5, column=0, columnspan=3, pady=(0, 10))
+
+        ttk.Label(
+            self.setup_frame,
+            text="Subject ID:"
+        ).grid(row=6, column=0, sticky='e', padx=5, pady=5)
+
+        ttk.Entry(
+            self.setup_frame,
+            textvariable=self.subject_id,
+            width=30
+        ).grid(row=6, column=1, sticky='w', padx=5, pady=5)
+
+        ttk.Label(
+            self.setup_frame,
+            text="Date (YYYY-MM-DD):"
+        ).grid(row=7, column=0, sticky='e', padx=5, pady=5)
+
+        ttk.Entry(
+            self.setup_frame,
+            textvariable=self.recording_date,
+            width=30
+        ).grid(row=7, column=1, sticky='w', padx=5, pady=5)
+
+        ttk.Label(
+            self.setup_frame,
+            text="Walking Condition:"
+        ).grid(row=8, column=0, sticky='e', padx=5, pady=5)
+
+        ttk.Entry(
+            self.setup_frame,
+            textvariable=self.walking_condition,
+            width=30
+        ).grid(row=8, column=1, sticky='w', padx=5, pady=5)
+
+        ttk.Label(
+            self.setup_frame,
+            text="(e.g., barefoot, with AFO, post-surgery week 4)",
+            foreground='gray'
+        ).grid(row=9, column=1, sticky='w', padx=5)
+
+        # Start button
+        self.start_btn = ttk.Button(
+            self.setup_frame,
+            text="Start Processing",
+            command=self._start_session,
+            state='disabled'
+        )
+        self.start_btn.grid(row=10, column=0, columnspan=3, pady=30)
+
+    def _show_setup_panel(self):
+        """Show the setup panel and hide the analysis UI."""
+        self.workflow_state = WorkflowState.SETUP
+
+        # Hide analysis UI elements
+        self.left_display_frame.grid_remove()
+        self.right_display_frame.grid_remove()
+        self.info_panel_frame.grid_remove()
+        self.gait_notebook.grid_remove()
+
+        # Show setup panel
+        self.setup_frame.grid(row=1, column=0, columnspan=2, sticky='nsew', pady=20)
+
+        # Update control bar
+        self._update_control_bar_for_state()
+
+    def _hide_setup_panel(self):
+        """Hide the setup panel and show the analysis UI."""
+        self.setup_frame.grid_remove()
+
+        # Show analysis UI elements
+        self.left_display_frame.grid()
+        self.right_display_frame.grid()
+        self.info_panel_frame.grid()
+        self.gait_notebook.grid()
+
+    def _select_sagittal_video(self):
+        """Open file dialog to select sagittal view video."""
+        filetypes = [
+            ("Video files", "*.mp4 *.avi *.mov *.mkv *.wmv *.flv *.webm"),
+            ("All files", "*.*")
+        ]
+        path = filedialog.askopenfilename(
+            title="Select Sagittal (Side) View Video",
+            filetypes=filetypes
+        )
+        if path:
+            self.sagittal_video_path = path
+            self.sagittal_path_var.set(os.path.basename(path))
+            self._check_ready_to_start()
+
+    def _select_frontal_video(self):
+        """Open file dialog to select frontal view video."""
+        filetypes = [
+            ("Video files", "*.mp4 *.avi *.mov *.mkv *.wmv *.flv *.webm"),
+            ("All files", "*.*")
+        ]
+        path = filedialog.askopenfilename(
+            title="Select Frontal (Front) View Video",
+            filetypes=filetypes
+        )
+        if path:
+            self.frontal_video_path = path
+            self.frontal_path_var.set(os.path.basename(path))
+            self._check_ready_to_start()
+
+    def _check_ready_to_start(self):
+        """Enable start button if both videos are selected."""
+        if self.sagittal_video_path and self.frontal_video_path:
+            self.start_btn.configure(state='normal')
+        else:
+            self.start_btn.configure(state='disabled')
+
+    def _start_session(self):
+        """Start the dual-view analysis session."""
+        # Create metadata
+        metadata = SubjectMetadata(
+            subject_id=self.subject_id.get(),
+            date=self.recording_date.get(),
+            walking_condition=self.walking_condition.get()
+        )
+
+        # Create session
+        self.session = DualViewSession(
+            metadata=metadata,
+            sagittal_camera_side=self.sagittal_camera_side.get()
+        )
+
+        # Set view type based on camera side
+        camera_side = self.sagittal_camera_side.get()
+        self.view_type.set(f'side_{camera_side}')
+
+        # Hide setup panel
+        self._hide_setup_panel()
+
+        # Start processing both videos
+        self._process_both_videos()
+
+    def _process_both_videos(self):
+        """Process both sagittal and frontal videos for pose extraction."""
+        self.workflow_state = WorkflowState.PROCESSING
+        self._update_control_bar_for_state()
+
+        # Initialize pose detector if needed
+        if not self.pose_detector:
+            self.pose_detector = PoseDetector()
+
+        try:
+            # Load sagittal video
+            self.status_label.configure(text="Loading sagittal video...")
+            self.root.update_idletasks()
+            self.sagittal_video_processor = VideoProcessor(self.sagittal_video_path)
+
+            # Load frontal video
+            self.status_label.configure(text="Loading frontal video...")
+            self.root.update_idletasks()
+            self.frontal_video_processor = VideoProcessor(self.frontal_video_path)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load videos:\n{str(e)}")
+            self._show_setup_panel()
+            return
+
+        self.is_processing = True
+
+        # Process in background thread
+        def process():
+            try:
+                # Process sagittal video
+                self.root.after(0, lambda: self.status_label.configure(
+                    text="Processing sagittal video..."
+                ))
+                self.root.after(0, lambda: self.gait_control_panel.set_progress(
+                    0, 100, "Processing sagittal video..."
+                ))
+
+                self.sagittal_results = batch_process_video(
+                    self.sagittal_video_processor,
+                    self.pose_detector,
+                    self.view_type.get(),  # side_left or side_right
+                    self.com_calculator,
+                    progress_callback=lambda c, t: self.root.after(
+                        0, lambda: self.gait_control_panel.set_progress(
+                            c, t, f"Sagittal: {c}/{t}"
+                        )
+                    )
+                )
+
+                # Process frontal video
+                self.root.after(0, lambda: self.status_label.configure(
+                    text="Processing frontal video..."
+                ))
+
+                self.frontal_results = batch_process_video(
+                    self.frontal_video_processor,
+                    self.pose_detector,
+                    'front',
+                    self.com_calculator,
+                    progress_callback=lambda c, t: self.root.after(
+                        0, lambda: self.gait_control_panel.set_progress(
+                            c, t, f"Frontal: {c}/{t}"
+                        )
+                    )
+                )
+
+                # Store results in session
+                self.session.sagittal_results = self.sagittal_results
+                self.session.frontal_results = self.frontal_results
+
+                # Transition to marking sagittal
+                self.root.after(0, self._start_marking_sagittal)
+
+            except Exception as e:
+                self.root.after(0, lambda: self._on_processing_error(str(e)))
+
+        thread = threading.Thread(target=process, daemon=True)
+        thread.start()
+
+    def _start_marking_sagittal(self):
+        """Start marking heel strikes on sagittal view."""
+        self.is_processing = False
+        self.workflow_state = WorkflowState.MARKING_SAGITTAL
+        self._update_control_bar_for_state()
+
+        # Set current video to sagittal
+        self.current_video_processor = self.sagittal_video_processor
+        self.current_batch_results = self.sagittal_results
+
+        # Update display scale
+        max_display_width = 640
+        max_display_height = 360
+        scale_w = max_display_width / self.current_video_processor.width
+        scale_h = max_display_height / self.current_video_processor.height
+        self.display_scale = min(scale_w, scale_h, 1.0)
+
+        display_w = int(self.current_video_processor.width * self.display_scale)
+        display_h = int(self.current_video_processor.height * self.display_scale)
+        self.left_canvas.configure(width=display_w, height=display_h)
+        self.right_canvas.configure(width=display_w, height=display_h)
+
+        # Update UI elements
+        self.frame_slider.configure(to=self.current_video_processor.total_frames - 1)
+        self.total_frames_label.configure(
+            text=f"/ {self.current_video_processor.total_frames}"
+        )
+
+        # Update timeline
+        self.timeline_panel.set_data(
+            self.sagittal_results.total_frames,
+            self.sagittal_results.heel_strike_events,
+            self.sagittal_results.gait_cycles
+        )
+
+        # Update gait control panel
+        self.gait_control_panel.set_results(0, 0, self.sagittal_results.processing_time_seconds, 0)
+        self.gait_control_panel.set_progress(
+            self.sagittal_results.total_frames,
+            self.sagittal_results.total_frames,
+            "Ready for marking"
+        )
+
+        # Load first frame
+        self._goto_frame(0)
+
+        self.status_label.configure(
+            text="SAGITTAL VIEW: Mark heel strikes, then click 'Done with Sagittal View'"
+        )
+
+        # Show "Done with Sagittal" button in timeline panel
+        self._show_done_button('sagittal')
+
+    def _done_with_sagittal(self):
+        """Called when user finishes marking heel strikes on sagittal view."""
+        # Build cycles from marked heel strikes
+        self._rebuild_cycles()
+
+        # Normalize sagittal cycles
+        self.sagittal_normalized_cycles = []
+        for cycle in self.sagittal_results.gait_cycles:
+            normalized = self.gait_normalizer.normalize_cycle(
+                cycle,
+                self.sagittal_results.frame_data,
+                self.sagittal_results.fps
+            )
+            if normalized:
+                self.sagittal_normalized_cycles.append(normalized)
+
+        self.session.sagittal_normalized_cycles = self.sagittal_normalized_cycles
+
+        # Transition to frontal marking
+        self._start_marking_frontal()
+
+    def _start_marking_frontal(self):
+        """Start marking heel strikes on frontal view."""
+        self.workflow_state = WorkflowState.MARKING_FRONTAL
+        self._update_control_bar_for_state()
+
+        # Set current video to frontal
+        self.current_video_processor = self.frontal_video_processor
+        self.current_batch_results = self.frontal_results
+
+        # Update display scale
+        max_display_width = 640
+        max_display_height = 360
+        scale_w = max_display_width / self.current_video_processor.width
+        scale_h = max_display_height / self.current_video_processor.height
+        self.display_scale = min(scale_w, scale_h, 1.0)
+
+        display_w = int(self.current_video_processor.width * self.display_scale)
+        display_h = int(self.current_video_processor.height * self.display_scale)
+        self.left_canvas.configure(width=display_w, height=display_h)
+        self.right_canvas.configure(width=display_w, height=display_h)
+
+        # Update UI elements
+        self.frame_slider.configure(to=self.current_video_processor.total_frames - 1)
+        self.total_frames_label.configure(
+            text=f"/ {self.current_video_processor.total_frames}"
+        )
+
+        # Update timeline
+        self.timeline_panel.set_data(
+            self.frontal_results.total_frames,
+            self.frontal_results.heel_strike_events,
+            self.frontal_results.gait_cycles
+        )
+
+        # Update gait control panel
+        self.gait_control_panel.set_results(0, 0, self.frontal_results.processing_time_seconds, 0)
+
+        # Load first frame
+        self._goto_frame(0)
+
+        self.status_label.configure(
+            text="FRONTAL VIEW: Mark heel strikes, then click 'Done with Frontal View'"
+        )
+
+        # Show "Done with Frontal" button
+        self._show_done_button('frontal')
+
+    def _done_with_frontal(self):
+        """Called when user finishes marking heel strikes on frontal view."""
+        # Build cycles from marked heel strikes
+        self._rebuild_cycles()
+
+        # Normalize frontal cycles
+        self.frontal_normalized_cycles = []
+        for cycle in self.frontal_results.gait_cycles:
+            normalized = self.gait_normalizer.normalize_cycle(
+                cycle,
+                self.frontal_results.frame_data,
+                self.frontal_results.fps
+            )
+            if normalized:
+                self.frontal_normalized_cycles.append(normalized)
+
+        self.session.frontal_normalized_cycles = self.frontal_normalized_cycles
+
+        # Transition to analysis ready
+        self._analysis_ready()
+
+    def _analysis_ready(self):
+        """Called when both views are marked and analysis is ready."""
+        self.workflow_state = WorkflowState.ANALYSIS_READY
+        self._update_control_bar_for_state()
+
+        # Hide done button
+        self._hide_done_button()
+
+        # Update panels with sagittal data by default
+        self.current_video_processor = self.sagittal_video_processor
+        self.current_batch_results = self.sagittal_results
+
+        # Update all dual-view panels with both sagittal and frontal data
+        self.cycles_panel.set_sagittal_data(
+            self.sagittal_results.gait_cycles,
+            self.sagittal_normalized_cycles
+        )
+        self.cycles_panel.set_frontal_data(
+            self.frontal_results.gait_cycles,
+            self.frontal_normalized_cycles
+        )
+
+        self.comparison_panel.set_sagittal_data(self.sagittal_normalized_cycles)
+        self.comparison_panel.set_frontal_data(self.frontal_normalized_cycles)
+
+        self.posture_panel.set_sagittal_data(self.sagittal_normalized_cycles)
+        self.posture_panel.set_frontal_data(self.frontal_normalized_cycles)
+
+        self.com_panel.set_sagittal_data(self.sagittal_normalized_cycles)
+        self.com_panel.set_frontal_data(self.frontal_normalized_cycles)
+
+        # Update status
+        sagittal_cycles = len(self.sagittal_results.gait_cycles)
+        frontal_cycles = len(self.frontal_results.gait_cycles)
+        self.status_label.configure(
+            text=f"Analysis ready: {sagittal_cycles} sagittal cycles, {frontal_cycles} frontal cycles"
+        )
+
+    def _show_done_button(self, view_type: str):
+        """Show the appropriate 'Done' button prominently in the workflow action bar."""
+        # Show the workflow action frame
+        self.workflow_action_frame.grid()
+
+        if view_type == 'sagittal':
+            self.done_btn.configure(
+                text="✓ Done with Sagittal View - Proceed to Frontal",
+                command=self._done_with_sagittal
+            )
+            self.workflow_instruction.configure(
+                text="Mark heel strikes on the SAGITTAL (side) video using the Timeline tab, "
+                     "then click the button below when finished:"
+            )
+        else:
+            self.done_btn.configure(
+                text="✓ Done with Frontal View - Proceed to Analysis",
+                command=self._done_with_frontal
+            )
+            self.workflow_instruction.configure(
+                text="Mark heel strikes on the FRONTAL (front) video using the Timeline tab, "
+                     "then click the button below when finished:"
+            )
+
+    def _hide_done_button(self):
+        """Hide the workflow action bar."""
+        if hasattr(self, 'workflow_action_frame'):
+            self.workflow_action_frame.grid_remove()
+
+    def _update_control_bar_for_state(self):
+        """Update control bar based on workflow state."""
+        if self.workflow_state == WorkflowState.SETUP:
+            self.new_session_btn.configure(state='disabled')
+            self.workflow_label.configure(text="Setup: Select videos and enter metadata")
+        elif self.workflow_state == WorkflowState.PROCESSING:
+            self.new_session_btn.configure(state='disabled')
+            self.workflow_label.configure(text="Processing videos...")
+        elif self.workflow_state == WorkflowState.MARKING_SAGITTAL:
+            self.new_session_btn.configure(state='normal')
+            self.workflow_label.configure(text="Step 1/2: Mark heel strikes in SAGITTAL view")
+        elif self.workflow_state == WorkflowState.MARKING_FRONTAL:
+            self.new_session_btn.configure(state='normal')
+            self.workflow_label.configure(text="Step 2/2: Mark heel strikes in FRONTAL view")
+        elif self.workflow_state == WorkflowState.ANALYSIS_READY:
+            self.new_session_btn.configure(state='normal')
+            self.workflow_label.configure(text="Analysis complete - View results")
+
     def _create_control_bar(self):
         """Create the top control bar."""
         control_frame = ttk.Frame(self.main_frame, style='Dark.TFrame')
         control_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
 
-        # Load button
-        self.load_btn = ttk.Button(control_frame, text="Load Video", command=self._open_file_dialog)
-        self.load_btn.pack(side=tk.LEFT, padx=5)
+        # New Session button
+        self.new_session_btn = ttk.Button(
+            control_frame,
+            text="New Session",
+            command=self._show_setup_panel
+        )
+        self.new_session_btn.pack(side=tk.LEFT, padx=5)
+
+        # Workflow status label
+        self.workflow_label = ttk.Label(
+            control_frame,
+            text="Setup: Select videos and enter metadata",
+            font=('TkDefaultFont', 10, 'bold'),
+            foreground='#88ccff'
+        )
+        self.workflow_label.pack(side=tk.LEFT, padx=20)
 
         # Navigation buttons
         nav_frame = ttk.Frame(control_frame, style='Dark.TFrame')
@@ -402,6 +1019,51 @@ class PoseViewerApp:
             style='Status.TLabel'
         )
         hint_label.pack(side=tk.LEFT, padx=20)
+
+        # Create workflow action frame (shown during heel strike marking)
+        self._create_workflow_action_bar()
+
+    def _create_workflow_action_bar(self):
+        """Create the workflow action bar for heel strike marking completion."""
+        # Create a prominent action frame between status bar and gait panels
+        self.workflow_action_frame = ttk.Frame(self.main_frame)
+        self.workflow_action_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=10)
+
+        # Initially hidden
+        self.workflow_action_frame.grid_remove()
+
+        # Inner frame with colored background for visibility
+        inner_frame = tk.Frame(
+            self.workflow_action_frame,
+            bg='#3d5a80',  # Blue-gray background
+            padx=20,
+            pady=15
+        )
+        inner_frame.pack(fill=tk.X, padx=10)
+
+        # Instruction label
+        self.workflow_instruction = tk.Label(
+            inner_frame,
+            text="Mark heel strikes using the Timeline tab, then click the button below:",
+            bg='#3d5a80',
+            fg='white',
+            font=('TkDefaultFont', 11)
+        )
+        self.workflow_instruction.pack(pady=(0, 10))
+
+        # Done button (large and prominent)
+        self.done_btn = tk.Button(
+            inner_frame,
+            text="✓ Done - Proceed to Next Step",
+            font=('TkDefaultFont', 12, 'bold'),
+            bg='#98c379',  # Green background
+            fg='black',
+            activebackground='#7cb360',
+            padx=30,
+            pady=10,
+            cursor='hand2'
+        )
+        self.done_btn.pack()
 
     def _open_file_dialog(self):
         """Open a file dialog to select a video."""
@@ -634,10 +1296,10 @@ class PoseViewerApp:
         """Create the gait analysis tabbed interface."""
         # Create notebook (tabbed interface)
         self.gait_notebook = ttk.Notebook(self.main_frame)
-        self.gait_notebook.grid(row=4, column=0, columnspan=2, sticky="nsew", pady=(10, 0))
+        self.gait_notebook.grid(row=5, column=0, columnspan=2, sticky="nsew", pady=(10, 0))
 
-        # Configure row weight for notebook
-        self.main_frame.rowconfigure(4, weight=1)
+        # Configure row weight for notebook (row 5 gets remaining space)
+        self.main_frame.rowconfigure(5, weight=1)
 
         # Tab 1: Gait Control Panel
         self.gait_control_panel = GaitControlPanel(
@@ -654,31 +1316,30 @@ class PoseViewerApp:
             self.gait_notebook,
             on_frame_select=self._goto_frame,
             on_event_add=self._add_heel_strike,
-            on_event_remove=self._remove_heel_strike,
-            on_clear_auto=self._clear_auto_detected
+            on_event_remove=self._remove_heel_strike
         )
         self.gait_notebook.add(self.timeline_panel, text="Timeline")
 
-        # Tab 3: Cycles List
-        self.cycles_panel = GaitCycleListPanel(
+        # Tab 3: Cycles List (Dual-View with Sagittal/Frontal sub-tabs)
+        self.cycles_panel = DualViewCycleListPanel(
             self.gait_notebook,
             on_cycle_select=self._on_cycle_select
         )
         self.gait_notebook.add(self.cycles_panel, text="Cycles")
 
-        # Tab 4: Comparison
-        self.comparison_panel = CycleComparisonPanel(self.gait_notebook)
+        # Tab 4: Comparison (Dual-View with Sagittal/Frontal sub-tabs)
+        self.comparison_panel = DualViewComparisonPanel(self.gait_notebook)
         self.gait_notebook.add(self.comparison_panel, text="Compare")
 
-        # Tab 5: Postural Angles
-        self.posture_panel = PosturalAnglesPanel(
+        # Tab 5: Postural Angles (Dual-View with Sagittal/Frontal sub-tabs)
+        self.posture_panel = DualViewPosturePanel(
             self.gait_notebook,
             view_type_var=self.view_type
         )
         self.gait_notebook.add(self.posture_panel, text="Posture")
 
-        # Tab 6: Center of Mass
-        self.com_panel = CenterOfMassPanel(self.gait_notebook)
+        # Tab 6: Center of Mass (Dual-View with Sagittal/Frontal sub-tabs)
+        self.com_panel = DualViewCenterOfMassPanel(self.gait_notebook)
         self.gait_notebook.add(self.com_panel, text="Center of Mass")
 
         # Tab 7: Export
@@ -728,7 +1389,7 @@ class PoseViewerApp:
 
         # Re-process if we have results
         if self.batch_results:
-            self.gait_control_panel.set_results(0, 0, 0, 0, 0)
+            self.gait_control_panel.set_results(0, 0, 0, 0)
             self.status_label.configure(
                 text=f"View type changed to {view_type}. Re-process video to update results."
             )
@@ -913,29 +1574,6 @@ class PoseViewerApp:
         except ValueError:
             pass
 
-    def _clear_auto_detected(self):
-        """Remove all auto-detected heel strike events (keep only manual ones)."""
-        if not self.batch_results:
-            return
-
-        # Count events before removal
-        original_count = len(self.batch_results.heel_strike_events)
-
-        # Keep only manually marked events
-        self.batch_results.heel_strike_events = [
-            e for e in self.batch_results.heel_strike_events if e.is_manual
-        ]
-
-        removed_count = original_count - len(self.batch_results.heel_strike_events)
-
-        # Rebuild cycles with remaining events
-        self._rebuild_cycles()
-
-        self.status_label.configure(
-            text=f"Cleared {removed_count} auto-detected heel strikes. "
-                 f"{len(self.batch_results.heel_strike_events)} manual events remain."
-        )
-
     def _rebuild_cycles(self):
         """Rebuild gait cycles from current events."""
         if not self.batch_results:
@@ -1000,30 +1638,69 @@ class PoseViewerApp:
 
     def _export_data(self, format_type: str, path: str):
         """Export gait data."""
-        if not self.batch_results or not self.normalized_cycles:
-            messagebox.showinfo("Info", "No data to export. Process a video first.")
-            return
+        # Check if we have dual-view data (both sagittal and frontal processed)
+        has_dual_view = (
+            self.workflow_state == WorkflowState.ANALYSIS_READY and
+            self.session is not None and
+            self.sagittal_results is not None and
+            self.frontal_results is not None
+        )
 
+        if has_dual_view:
+            # Export dual-view data
+            self._export_dual_view_data(format_type, path)
+        else:
+            # Fall back to single-view export
+            if not self.batch_results or not self.normalized_cycles:
+                messagebox.showinfo("Info", "No data to export. Process a video first.")
+                return
+
+            try:
+                package = self.gait_exporter.create_export_package(
+                    self.batch_results,
+                    self.normalized_cycles
+                )
+
+                if format_type == 'numpy':
+                    self.gait_exporter.export_numpy(package, path)
+                elif format_type == 'pickle':
+                    self.gait_exporter.export_pickle(package, path)
+                elif format_type == 'all':
+                    # Remove extension for all-format export
+                    base_path = path.rsplit('.', 1)[0] if '.' in path else path
+                    self.gait_exporter.export_all(package, base_path)
+
+                self.export_panel.set_status(f"Exported successfully to {path}")
+                self.status_label.configure(text=f"Data exported to {path}")
+
+            except Exception as e:
+                messagebox.showerror("Export Error", f"Failed to export:\n{str(e)}")
+
+    def _export_dual_view_data(self, format_type: str, path: str):
+        """Export dual-view gait data (sagittal and frontal)."""
         try:
-            package = self.gait_exporter.create_export_package(
-                self.batch_results,
-                self.normalized_cycles
+            package = self.gait_exporter.create_dual_view_export_package(
+                self.session,
+                self.sagittal_results,
+                self.frontal_results,
+                self.sagittal_normalized_cycles,
+                self.frontal_normalized_cycles
             )
 
             if format_type == 'numpy':
-                self.gait_exporter.export_numpy(package, path)
+                self.gait_exporter.export_dual_view_numpy(package, path)
             elif format_type == 'pickle':
-                self.gait_exporter.export_pickle(package, path)
+                self.gait_exporter.export_dual_view_pickle(package, path)
             elif format_type == 'all':
                 # Remove extension for all-format export
                 base_path = path.rsplit('.', 1)[0] if '.' in path else path
-                self.gait_exporter.export_all(package, base_path)
+                self.gait_exporter.export_dual_view_all(package, base_path)
 
-            self.export_panel.set_status(f"Exported successfully to {path}")
-            self.status_label.configure(text=f"Data exported to {path}")
+            self.export_panel.set_status(f"Dual-view data exported successfully to {path}")
+            self.status_label.configure(text=f"Dual-view data exported to {path}")
 
         except Exception as e:
-            messagebox.showerror("Export Error", f"Failed to export:\n{str(e)}")
+            messagebox.showerror("Export Error", f"Failed to export dual-view data:\n{str(e)}")
 
     def _update_timeline_frame(self):
         """Update timeline with current frame position."""
@@ -1040,15 +1717,12 @@ class PoseViewerApp:
 
 def main():
     """Main entry point."""
-    # Get video path from command line if provided
-    video_path = sys.argv[1] if len(sys.argv) > 1 else None
-
     # Create main window
     root = tk.Tk()
     root.geometry("1200x1200")  # Sized for portrait videos and gait analysis panels
 
-    # Create application
-    app = PoseViewerApp(root, video_path)
+    # Create application (setup panel will be shown automatically)
+    app = PoseViewerApp(root)
 
     # Handle window close
     def on_closing():
