@@ -9,6 +9,7 @@ from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass, field
 import numpy as np
 from scipy.interpolate import interp1d
+from scipy.ndimage import uniform_filter1d
 
 from gait_cycle import GaitCycle, FramePoseData
 
@@ -213,11 +214,24 @@ class GaitNormalizer:
                 if cycle.duration_seconds > 0:
                     dt = cycle.duration_seconds / 100.0  # seconds per normalized point
 
-                    # Compute velocity using central differences where possible
-                    velocity = np.full_like(arm_swing_series, np.nan)
-                    for i in range(1, len(arm_swing_series) - 1):
-                        if not np.isnan(arm_swing_series[i-1]) and not np.isnan(arm_swing_series[i+1]):
-                            velocity[i] = (arm_swing_series[i+1] - arm_swing_series[i-1]) / (2 * dt)
+                    # Apply smoothing filter to reduce noise before computing velocity
+                    # Use a 5-point moving average (covers 5% of gait cycle)
+                    smoothed_series = arm_swing_series.copy()
+                    valid_indices = np.where(valid_mask)[0]
+                    if len(valid_indices) >= 5:
+                        # Interpolate NaN values for smoothing
+                        smoothed_series = np.interp(
+                            np.arange(len(arm_swing_series)),
+                            valid_indices,
+                            arm_swing_series[valid_indices]
+                        )
+                        # Apply smoothing filter
+                        smoothed_series = uniform_filter1d(smoothed_series, size=5, mode='nearest')
+
+                    # Compute velocity using central differences on smoothed data
+                    velocity = np.full_like(smoothed_series, np.nan)
+                    for i in range(1, len(smoothed_series) - 1):
+                        velocity[i] = (smoothed_series[i+1] - smoothed_series[i-1]) / (2 * dt)
 
                     # Peak forward velocity (positive = forward swing)
                     valid_vel = velocity[~np.isnan(velocity)]

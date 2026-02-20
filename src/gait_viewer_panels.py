@@ -613,7 +613,11 @@ class CycleComparisonPanel(ttk.Frame):
         ttk.Label(control_frame, text="Angle:").pack(side=tk.LEFT, padx=5)
 
         self.angle_var = tk.StringVar(value='knee')
-        angle_options = ['shoulder', 'elbow', 'hip', 'knee', 'ankle', 'arm_swing']
+        # Sagittal view angles + frontal view limb angles
+        angle_options = [
+            'shoulder', 'elbow', 'hip', 'knee', 'ankle', 'arm_swing',  # Sagittal
+            'arm', 'leg'  # Frontal (shoulder-wrist and hip-ankle vs vertical)
+        ]
         self.angle_combo = ttk.Combobox(
             control_frame,
             textvariable=self.angle_var,
@@ -769,7 +773,14 @@ class CycleComparisonPanel(ttk.Frame):
             self.ax.fill_between(x, right_mean - right_std, right_mean + right_std,
                                 alpha=0.3, color='blue')
 
-        self.ax.set_title(f'{angle_base.capitalize()} Angle: Left vs Right', color='white', fontsize=11, pad=10)
+        # Set appropriate title based on angle type
+        if angle_base == 'arm':
+            title = 'Arm Angle (vs Vertical): Left vs Right'
+        elif angle_base == 'leg':
+            title = 'Leg Angle (vs Vertical): Left vs Right'
+        else:
+            title = f'{angle_base.capitalize()} Angle: Left vs Right'
+        self.ax.set_title(title, color='white', fontsize=11, pad=10)
 
     def _plot_arm_swing(self, x: np.ndarray):
         """Plot arm swing angle across all cycles with summary metrics."""
