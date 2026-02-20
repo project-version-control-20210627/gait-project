@@ -115,6 +115,7 @@ class PoseViewerApp:
 
 
 
+
         """
         Initialize the application.
 
@@ -253,6 +254,16 @@ class PoseViewerApp:
         style.configure('DetectGood.TLabel', background=light_gray_bg, foreground='#006600')  # Dark green
         style.configure('DetectBad.TLabel', background=light_gray_bg, foreground='#cc0000')  # Dark red
 
+        # Setup panel styles (black text on default/light background for landing screen)
+        style.configure('Setup.TLabelframe', background='#e0e0e0')
+        style.configure('Setup.TLabelframe.Label', background='#e0e0e0', foreground='#000000')
+        style.configure('Setup.TFrame', background='#e0e0e0')
+        style.configure('Setup.TLabel', background='#e0e0e0', foreground='#000000')
+        style.configure('Setup.TRadiobutton', background='#e0e0e0', foreground='#000000')
+        style.configure('Setup.TEntry', fieldbackground='white', foreground='#000000')
+        style.configure('SetupHint.TLabel', background='#e0e0e0', foreground='#666666')
+        style.configure('SetupTitle.TLabel', background='#e0e0e0', foreground='#000000')
+
         # Apply default dark style to base classes
         style.configure('TLabel', background='#2b2b2b', foreground='white')
         style.configure('TFrame', background='#2b2b2b')
@@ -280,7 +291,8 @@ class PoseViewerApp:
         self.setup_frame = ttk.LabelFrame(
             self.main_frame,
             text="Session Setup",
-            padding="20"
+            padding="20",
+            style='Setup.TLabelframe'
         )
         # Will be shown/hidden via grid
 
@@ -288,20 +300,23 @@ class PoseViewerApp:
         ttk.Label(
             self.setup_frame,
             text="Dual-View Gait Analysis Setup",
-            font=('TkDefaultFont', 14, 'bold')
+            font=('TkDefaultFont', 14, 'bold'),
+            style='SetupTitle.TLabel'
         ).grid(row=0, column=0, columnspan=3, pady=(0, 20))
 
         # Sagittal video selection
         ttk.Label(
             self.setup_frame,
-            text="Sagittal (Side) View Video:"
+            text="Sagittal (Side) View Video:",
+            style='Setup.TLabel'
         ).grid(row=1, column=0, sticky='e', padx=5, pady=5)
 
         self.sagittal_path_var = tk.StringVar(value="No file selected")
         ttk.Label(
             self.setup_frame,
             textvariable=self.sagittal_path_var,
-            width=50
+            width=50,
+            style='Setup.TLabel'
         ).grid(row=1, column=1, sticky='w', padx=5, pady=5)
 
         ttk.Button(
@@ -313,37 +328,42 @@ class PoseViewerApp:
         # Camera side selection
         ttk.Label(
             self.setup_frame,
-            text="Camera Position:"
+            text="Camera Position:",
+            style='Setup.TLabel'
         ).grid(row=2, column=0, sticky='e', padx=5, pady=5)
 
-        camera_frame = ttk.Frame(self.setup_frame)
+        camera_frame = ttk.Frame(self.setup_frame, style='Setup.TFrame')
         camera_frame.grid(row=2, column=1, sticky='w', padx=5, pady=5)
 
         ttk.Radiobutton(
             camera_frame,
             text="Left Side of Subject",
             variable=self.sagittal_camera_side,
-            value='left'
+            value='left',
+            style='Setup.TRadiobutton'
         ).pack(side=tk.LEFT, padx=10)
 
         ttk.Radiobutton(
             camera_frame,
             text="Right Side of Subject",
             variable=self.sagittal_camera_side,
-            value='right'
+            value='right',
+            style='Setup.TRadiobutton'
         ).pack(side=tk.LEFT, padx=10)
 
         # Frontal video selection
         ttk.Label(
             self.setup_frame,
-            text="Frontal (Front) View Video:"
+            text="Frontal (Front) View Video:",
+            style='Setup.TLabel'
         ).grid(row=3, column=0, sticky='e', padx=5, pady=5)
 
         self.frontal_path_var = tk.StringVar(value="No file selected")
         ttk.Label(
             self.setup_frame,
             textvariable=self.frontal_path_var,
-            width=50
+            width=50,
+            style='Setup.TLabel'
         ).grid(row=3, column=1, sticky='w', padx=5, pady=5)
 
         ttk.Button(
@@ -361,12 +381,14 @@ class PoseViewerApp:
         ttk.Label(
             self.setup_frame,
             text="Subject Metadata",
-            font=('TkDefaultFont', 11, 'bold')
+            font=('TkDefaultFont', 11, 'bold'),
+            style='SetupTitle.TLabel'
         ).grid(row=5, column=0, columnspan=3, pady=(0, 10))
 
         ttk.Label(
             self.setup_frame,
-            text="Subject ID:"
+            text="Subject ID:",
+            style='Setup.TLabel'
         ).grid(row=6, column=0, sticky='e', padx=5, pady=5)
 
         ttk.Entry(
@@ -377,7 +399,8 @@ class PoseViewerApp:
 
         ttk.Label(
             self.setup_frame,
-            text="Date (YYYY-MM-DD):"
+            text="Date (YYYY-MM-DD):",
+            style='Setup.TLabel'
         ).grid(row=7, column=0, sticky='e', padx=5, pady=5)
 
         ttk.Entry(
@@ -388,7 +411,8 @@ class PoseViewerApp:
 
         ttk.Label(
             self.setup_frame,
-            text="Walking Condition:"
+            text="Walking Condition:",
+            style='Setup.TLabel'
         ).grid(row=8, column=0, sticky='e', padx=5, pady=5)
 
         ttk.Entry(
@@ -400,7 +424,7 @@ class PoseViewerApp:
         ttk.Label(
             self.setup_frame,
             text="(e.g., barefoot, with AFO, post-surgery week 4)",
-            foreground='gray'
+            style='SetupHint.TLabel'
         ).grid(row=9, column=1, sticky='w', padx=5)
 
         # Start button
@@ -767,21 +791,19 @@ class PoseViewerApp:
 
         if view_type == 'sagittal':
             self.done_btn.configure(
-                text="✓ Done with Sagittal View - Proceed to Frontal",
+                text="✓ Done Sagittal → Frontal",
                 command=self._done_with_sagittal
             )
             self.workflow_instruction.configure(
-                text="Mark heel strikes on the SAGITTAL (side) video using the Timeline tab, "
-                     "then click the button below when finished:"
+                text="SAGITTAL: Mark heel strikes in Timeline, then:"
             )
         else:
             self.done_btn.configure(
-                text="✓ Done with Frontal View - Proceed to Analysis",
+                text="✓ Done Frontal → Analysis",
                 command=self._done_with_frontal
             )
             self.workflow_instruction.configure(
-                text="Mark heel strikes on the FRONTAL (front) video using the Timeline tab, "
-                     "then click the button below when finished:"
+                text="FRONTAL: Mark heel strikes in Timeline, then:"
             )
 
     def _hide_done_button(self):
@@ -912,6 +934,7 @@ class PoseViewerApp:
 
         # Create angle labels in a grid
         self.angle_labels = {}
+        self.angle_name_labels = {}  # Track the name labels for dynamic updates
 
         # Left side angles
         left_frame = ttk.Frame(self.info_panel_frame, style='AnglePanel.TFrame')
@@ -920,14 +943,25 @@ class PoseViewerApp:
         ttk.Label(left_frame, text="LEFT SIDE", style='Header.TLabel',
                   font=('TkDefaultFont', 10, 'bold')).grid(row=0, column=0, columnspan=2)
 
+        # Sagittal view angle names (default)
         angle_names_left = ['left_shoulder', 'left_elbow', 'left_hip', 'left_knee', 'left_ankle']
         for i, name in enumerate(angle_names_left):
             display_name = name.replace('left_', '').title()
-            ttk.Label(left_frame, text=f"{display_name}:",
-                      style='AngleLabel.TLabel').grid(row=i+1, column=0, sticky='e', padx=5)
+            name_label = ttk.Label(left_frame, text=f"{display_name}:",
+                                   style='AngleLabel.TLabel')
+            name_label.grid(row=i+1, column=0, sticky='e', padx=5)
+            self.angle_name_labels[name] = name_label
             self.angle_labels[name] = ttk.Label(left_frame, text="--", style='AngleValue.TLabel',
                                                  font=('TkDefaultFont', 10, 'bold'))
             self.angle_labels[name].grid(row=i+1, column=1, sticky='w', padx=5)
+
+        # Frontal view limb angle labels (hidden by default)
+        frontal_left_names = [('left_arm', 'Arm (vs vert):'), ('left_leg', 'Leg (vs vert):')]
+        for name, display_text in frontal_left_names:
+            name_label = ttk.Label(left_frame, text=display_text, style='AngleLabel.TLabel')
+            self.angle_name_labels[name] = name_label
+            self.angle_labels[name] = ttk.Label(left_frame, text="--", style='AngleValue.TLabel',
+                                                 font=('TkDefaultFont', 10, 'bold'))
 
         # Right side angles
         right_frame = ttk.Frame(self.info_panel_frame, style='AnglePanel.TFrame')
@@ -939,11 +973,25 @@ class PoseViewerApp:
         angle_names_right = ['right_shoulder', 'right_elbow', 'right_hip', 'right_knee', 'right_ankle']
         for i, name in enumerate(angle_names_right):
             display_name = name.replace('right_', '').title()
-            ttk.Label(right_frame, text=f"{display_name}:",
-                      style='AngleLabel.TLabel').grid(row=i+1, column=0, sticky='e', padx=5)
+            name_label = ttk.Label(right_frame, text=f"{display_name}:",
+                                   style='AngleLabel.TLabel')
+            name_label.grid(row=i+1, column=0, sticky='e', padx=5)
+            self.angle_name_labels[name] = name_label
             self.angle_labels[name] = ttk.Label(right_frame, text="--", style='AngleValue.TLabel',
                                                  font=('TkDefaultFont', 10, 'bold'))
             self.angle_labels[name].grid(row=i+1, column=1, sticky='w', padx=5)
+
+        # Frontal view limb angle labels (hidden by default)
+        frontal_right_names = [('right_arm', 'Arm (vs vert):'), ('right_leg', 'Leg (vs vert):')]
+        for name, display_text in frontal_right_names:
+            name_label = ttk.Label(right_frame, text=display_text, style='AngleLabel.TLabel')
+            self.angle_name_labels[name] = name_label
+            self.angle_labels[name] = ttk.Label(right_frame, text="--", style='AngleValue.TLabel',
+                                                 font=('TkDefaultFont', 10, 'bold'))
+
+        # Store frames for layout updates
+        self.left_angle_frame = left_frame
+        self.right_angle_frame = right_frame
 
         # Postural angles (view-dependent)
         postural_frame = ttk.Frame(self.info_panel_frame, style='AnglePanel.TFrame')
@@ -1025,45 +1073,45 @@ class PoseViewerApp:
 
     def _create_workflow_action_bar(self):
         """Create the workflow action bar for heel strike marking completion."""
-        # Create a prominent action frame between status bar and gait panels
+        # Create a compact action frame between status bar and gait panels
         self.workflow_action_frame = ttk.Frame(self.main_frame)
-        self.workflow_action_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=10)
+        self.workflow_action_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=2)
 
         # Initially hidden
         self.workflow_action_frame.grid_remove()
 
-        # Inner frame with colored background for visibility
+        # Inner frame with colored background - compact layout
         inner_frame = tk.Frame(
             self.workflow_action_frame,
             bg='#3d5a80',  # Blue-gray background
-            padx=20,
-            pady=15
+            padx=10,
+            pady=5
         )
-        inner_frame.pack(fill=tk.X, padx=10)
+        inner_frame.pack(fill=tk.X, padx=5)
 
-        # Instruction label
+        # Horizontal layout: instruction and button on same row
         self.workflow_instruction = tk.Label(
             inner_frame,
-            text="Mark heel strikes using the Timeline tab, then click the button below:",
+            text="Mark heel strikes in Timeline tab, then:",
             bg='#3d5a80',
             fg='white',
-            font=('TkDefaultFont', 11)
+            font=('TkDefaultFont', 10)
         )
-        self.workflow_instruction.pack(pady=(0, 10))
+        self.workflow_instruction.pack(side=tk.LEFT, padx=(5, 10))
 
-        # Done button (large and prominent)
+        # Done button (compact but visible)
         self.done_btn = tk.Button(
             inner_frame,
-            text="✓ Done - Proceed to Next Step",
-            font=('TkDefaultFont', 12, 'bold'),
+            text="✓ Done - Proceed",
+            font=('TkDefaultFont', 10, 'bold'),
             bg='#98c379',  # Green background
             fg='black',
             activebackground='#7cb360',
-            padx=30,
-            pady=10,
+            padx=15,
+            pady=3,
             cursor='hand2'
         )
-        self.done_btn.pack()
+        self.done_btn.pack(side=tk.LEFT)
 
     def _open_file_dialog(self):
         """Open a file dialog to select a video."""
@@ -1230,9 +1278,17 @@ class PoseViewerApp:
 
     def _update_angle_display(self):
         """Update the joint and postural angle labels."""
+        # Determine effective view type based on workflow state
+        if self.workflow_state == WorkflowState.MARKING_FRONTAL:
+            view_type = 'front'
+        else:
+            view_type = self.view_type.get()
+
+        # Update angle panel layout based on view type
+        self._update_angle_panel_layout(view_type)
+
         if self.current_landmarks:
             # Get all angles including postural angles (view-type dependent)
-            view_type = self.view_type.get()
             angles = self.pose_detector.get_all_angles(self.current_landmarks, view_type)
 
             for name, label in self.angle_labels.items():
@@ -1251,6 +1307,59 @@ class PoseViewerApp:
                 if name.endswith('_label'):
                     continue
                 label.configure(text="--")
+
+    def _update_angle_panel_layout(self, view_type: str):
+        """Update which angle labels are shown based on view type."""
+        is_frontal = view_type == 'front'
+
+        # Sagittal angle keys
+        sagittal_keys_left = ['left_shoulder', 'left_elbow', 'left_hip', 'left_knee', 'left_ankle']
+        sagittal_keys_right = ['right_shoulder', 'right_elbow', 'right_hip', 'right_knee', 'right_ankle']
+
+        # Frontal angle keys
+        frontal_keys_left = ['left_arm', 'left_leg']
+        frontal_keys_right = ['right_arm', 'right_leg']
+
+        if is_frontal:
+            # Hide sagittal angle labels
+            for name in sagittal_keys_left + sagittal_keys_right:
+                if name in self.angle_name_labels:
+                    self.angle_name_labels[name].grid_remove()
+                if name in self.angle_labels:
+                    self.angle_labels[name].grid_remove()
+
+            # Show frontal angle labels
+            for i, name in enumerate(frontal_keys_left):
+                if name in self.angle_name_labels:
+                    self.angle_name_labels[name].grid(row=i+1, column=0, sticky='e', padx=5)
+                if name in self.angle_labels:
+                    self.angle_labels[name].grid(row=i+1, column=1, sticky='w', padx=5)
+
+            for i, name in enumerate(frontal_keys_right):
+                if name in self.angle_name_labels:
+                    self.angle_name_labels[name].grid(row=i+1, column=0, sticky='e', padx=5)
+                if name in self.angle_labels:
+                    self.angle_labels[name].grid(row=i+1, column=1, sticky='w', padx=5)
+        else:
+            # Hide frontal angle labels
+            for name in frontal_keys_left + frontal_keys_right:
+                if name in self.angle_name_labels:
+                    self.angle_name_labels[name].grid_remove()
+                if name in self.angle_labels:
+                    self.angle_labels[name].grid_remove()
+
+            # Show sagittal angle labels
+            for i, name in enumerate(sagittal_keys_left):
+                if name in self.angle_name_labels:
+                    self.angle_name_labels[name].grid(row=i+1, column=0, sticky='e', padx=5)
+                if name in self.angle_labels:
+                    self.angle_labels[name].grid(row=i+1, column=1, sticky='w', padx=5)
+
+            for i, name in enumerate(sagittal_keys_right):
+                if name in self.angle_name_labels:
+                    self.angle_name_labels[name].grid(row=i+1, column=0, sticky='e', padx=5)
+                if name in self.angle_labels:
+                    self.angle_labels[name].grid(row=i+1, column=1, sticky='w', padx=5)
 
     def _prev_frame(self):
         """Go to previous frame."""

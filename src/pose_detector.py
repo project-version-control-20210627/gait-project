@@ -679,6 +679,99 @@ class PoseDetector:
 
         return angle
 
+    def get_frontal_arm_angle(
+        self,
+        landmarks: Dict[str, Tuple[float, float, float]],
+        side: str
+    ) -> Optional[float]:
+        """
+        Calculate arm angle for frontal view - angle of shoulder-to-wrist line vs vertical.
+
+        This measures the overall arm position in the frontal plane, which is more
+        meaningful than individual joint angles when viewed from the front.
+
+        Args:
+            landmarks: Dictionary of normalized landmarks
+            side: 'left' or 'right'
+
+        Returns:
+            Angle in degrees from vertical:
+            - 0° = arm pointing straight down (vertical)
+            - Positive = arm angled outward (abduction)
+            - Negative = arm angled inward (adduction)
+            Returns None if landmarks not visible
+        """
+        shoulder = landmarks.get(f'{side}_shoulder')
+        wrist = landmarks.get(f'{side}_wrist')
+
+        if shoulder is None or wrist is None:
+            return None
+
+        if shoulder[2] < 0.3 or wrist[2] < 0.3:
+            return None
+
+        # Vector from shoulder to wrist
+        dx = wrist[0] - shoulder[0]
+        dy = wrist[1] - shoulder[1]
+
+        # Angle from vertical (pointing down = positive y direction in image coords)
+        # Using atan2 to get angle from vertical [0, 1]
+        angle = np.degrees(np.arctan2(dx, dy))
+
+        # For left side, positive angle means arm is abducted (pointing left in image)
+        # For right side, positive angle means arm is abducted (pointing right in image)
+        # We want positive to mean abduction for both sides
+        if side == 'left':
+            angle = -angle  # Flip sign so abduction is positive for left arm
+
+        return angle
+
+    def get_frontal_leg_angle(
+        self,
+        landmarks: Dict[str, Tuple[float, float, float]],
+        side: str
+    ) -> Optional[float]:
+        """
+        Calculate leg angle for frontal view - angle of hip-to-ankle line vs vertical.
+
+        This measures the overall leg alignment in the frontal plane, useful for
+        detecting varus/valgus alignment and lateral trunk sway compensation.
+
+        Args:
+            landmarks: Dictionary of normalized landmarks
+            side: 'left' or 'right'
+
+        Returns:
+            Angle in degrees from vertical:
+            - 0° = leg straight down (vertical)
+            - Positive = leg angled outward (abduction)
+            - Negative = leg angled inward (adduction)
+            Returns None if landmarks not visible
+        """
+        hip = landmarks.get(f'{side}_hip')
+        ankle = landmarks.get(f'{side}_ankle')
+
+        if hip is None or ankle is None:
+            return None
+
+        if hip[2] < 0.3 or ankle[2] < 0.3:
+            return None
+
+        # Vector from hip to ankle
+        dx = ankle[0] - hip[0]
+        dy = ankle[1] - hip[1]
+
+        # Angle from vertical (pointing down = positive y direction in image coords)
+        angle = np.degrees(np.arctan2(dx, dy))
+
+        # For left side, positive angle means leg is abducted (pointing left in image)
+        # For right side, positive angle means leg is abducted (pointing right in image)
+        # We want positive to mean abduction for both sides
+        if side == 'left':
+            angle = -angle  # Flip sign so abduction is positive for left leg
+
+        return angle
+
     def get_arm_swing_angle(
         self,
         landmarks: Dict[str, Tuple[float, float, float]],
@@ -751,6 +844,10 @@ class PoseDetector:
         """
         Get both joint angles and postural angles combined.
 
+        For frontal view, arm and leg angles are replaced with limb-line angles
+        (shoulder-to-wrist and hip-to-ankle vs vertical) instead of individual
+        joint angles, as these are more meaningful in the frontal plane.
+
         Args:
             landmarks: Dictionary of normalized landmarks
             view_type: 'side_left', 'side_right', or 'front'
@@ -774,6 +871,29 @@ class PoseDetector:
 
             arm_swing = self.get_arm_swing_angle(landmarks, near_side, trunk_inclination)
             angles['arm_swing_angle'] = arm_swing
+
+        # For frontal view, replace joint angles with limb-line angles
+        elif view_type == 'front':
+            # Arm angles: shoulder-to-wrist line vs vertical
+            angles['left_arm'] = self.get_frontal_arm_angle(landmarks, 'left')
+            angles['right_arm'] = self.get_frontal_arm_angle(landmarks, 'right')
+
+            # Leg angles: hip-to-ankle line vs vertical
+            angles['left_leg'] = self.get_frontal_leg_angle(landmarks, 'left')
+            angles['right_leg'] = self.get_frontal_leg_angle(landmarks, 'right')
+
+            # Clear the individual joint angles since they're not meaningful in frontal view
+            # Keep them as None so they don't display incorrect values
+            angles['left_shoulder'] = None
+            angles['right_shoulder'] = None
+            angles['left_elbow'] = None
+            angles['right_elbow'] = None
+            angles['left_hip'] = None
+            angles['right_hip'] = None
+            angles['left_knee'] = None
+            angles['right_knee'] = None
+            angles['left_ankle'] = None
+            angles['right_ankle'] = None
 
         return angles
 

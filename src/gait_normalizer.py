@@ -16,7 +16,7 @@ from gait_cycle import GaitCycle, FramePoseData
 # Standard joint angle names in consistent order
 # Includes both limb joint angles and postural/axial angles
 ANGLE_NAMES = [
-    # Limb joint angles (bilateral)
+    # Limb joint angles (bilateral) - sagittal view
     'left_shoulder', 'right_shoulder',
     'left_elbow', 'right_elbow',
     'left_hip', 'right_hip',
@@ -32,6 +32,9 @@ ANGLE_NAMES = [
     'trunk_lateral_lean',    # Trunk lateral deviation from vertical
     # Arm swing - lateral view only (near-side arm)
     'arm_swing_angle',       # Shoulder-wrist angle relative to trunk
+    # Frontal view limb angles (shoulder-wrist and hip-ankle vs vertical)
+    'left_arm', 'right_arm',   # Shoulder-to-wrist line angle vs vertical
+    'left_leg', 'right_leg',   # Hip-to-ankle line angle vs vertical
 ]
 
 # Standard landmark names (MediaPipe 33-point model)
